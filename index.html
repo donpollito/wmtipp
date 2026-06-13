@@ -224,6 +224,9 @@ input[type=text]:focus{border-color:var(--gold)}
   </div>
 </div>
 
+<!-- DEBUG BAR - remove later -->
+<div id="debugBar" style="position:fixed;top:0;left:0;right:0;background:#1a1a2e;color:#aaa;font-size:10px;padding:3px 8px;z-index:999;display:none"></div>
+
 <!-- NAV -->
 <div class="bottom-nav" id="bottomNav" style="display:none">
   <button class="nav-btn active" id="navT" onclick="showTipsNav()"><span class="ni">⚽</span>Tippen</button>
@@ -777,7 +780,13 @@ function rerender(){
   if(selEl && selEl.classList.contains('active')){ showPlayerSelect(); }
 }
 
-// Speichert den gesamten State zu Firebase (debounced 300ms)
+function dbg(msg){
+  const bar = document.getElementById('debugBar');
+  if(bar){ bar.style.display='block'; bar.textContent = new Date().toLocaleTimeString() + ' ' + msg; }
+  console.log('[WM]', msg);
+}
+
+// Speichert den gesamten State zu Firebase
 function fbSave(){
   setSyncDot('syncing');
   clearTimeout(_saveTimer);
@@ -788,15 +797,29 @@ function fbSave(){
       results:   S.results   || {},
       koMatches: S.koMatches || [],
     };
+    const body = JSON.stringify(data);
+    dbg('Saving ' + body.length + ' bytes...');
     fetch(FB_URL + '.json', {
       method: 'PUT',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(data)
+      body: body
     })
-    .then(r => { if(!r.ok) throw new Error(r.status); return r.json(); })
-    .then(() => { _saving = false; setSyncDot('ok'); })
-    .catch(e => { _saving = false; setSyncDot('error'); console.warn('Save error:', e); });
-  }, 300);
+    .then(r => {
+      dbg('Response: ' + r.status + ' ' + r.statusText);
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(d => {
+      dbg('Saved OK: ' + JSON.stringify(d).slice(0,40));
+      _saving = false;
+      setSyncDot('ok');
+    })
+    .catch(e => {
+      dbg('ERROR: ' + e.message);
+      _saving = false;
+      setSyncDot('error');
+    });
+  }, 500);
 }
 
 // Poll: lädt Firebase und überschreibt lokalen State vollständig
