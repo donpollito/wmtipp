@@ -756,7 +756,7 @@ function esc(s){ return s.replace(/'/g,"\\'"); }
 // ════════════════════════════════════════
 document.getElementById('tipsName').textContent='';
 
-const FB_URL = "https://wmtipp-naponico-default-rtdb.firebaseio.com/tipp";
+const FB_URL = "https://wmtipp-naponico-default-rtdb.europe-west1.firebasedatabase.app/tipp";
 let _saving = false;  // blockiert Poll während Save läuft
 let _saveTimer = null; // debounce: sammelt schnelle Eingaben
 
