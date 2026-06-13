@@ -228,8 +228,6 @@ input[type=text]:focus{border-color:var(--gold)}
   <button class="nav-btn" id="navP" onclick="showPlayerSelect()"><span class="ni">👤</span>Spieler</button>
 </div>
 
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script>
 // ════════════════════════════════════════
 // DATA  — all times MESZ (= CEST = UTC+2)
@@ -355,15 +353,8 @@ let S = {players:["Pollo","Shaqiri","Mia","Nathi"],tips:{},results:{},koMatches:
 // Restore currentPlayer from localStorage (device-local)
 try{ const cp=localStorage.getItem('wm26_cp'); if(cp) S.currentPlayer=cp; }catch(e){}
 function save(){
-  setSyncDot('syncing');
   try{localStorage.setItem('wm26v3',JSON.stringify(S));}catch(e){}
-  if(window._db){
-    window._db.ref('tipp').update({
-      tips:     S.tips      || {},
-      results:  S.results   || {},
-      koMatches:S.koMatches || [],
-    }).then(()=>setSyncDot('ok')).catch(()=>setSyncDot('error'));
-  }
+  fbSave();
 }
 
 // ════════════════════════════════════════
@@ -755,39 +746,66 @@ function setNav(id){ ['navT','navR','navP'].forEach(n=>document.getElementById(n
 function esc(s){ return s.replace(/'/g,"\\'"); }
 
 // ════════════════════════════════════════
-// INIT — Firebase compat SDK
+// INIT — Firebase REST API (no SDK needed)
 // ════════════════════════════════════════
 document.getElementById('tipsName').textContent='';
 
-// Show loading spinner immediately
-document.getElementById('playerSelect').classList.add('active');
-document.getElementById('playerButtons').innerHTML=
-  '<div style="color:var(--muted);font-size:14px;padding:40px 0">⏳ Verbinde mit Firebase…</div>';
+const FB_URL = "https://wmtipp-naponico-default-rtdb.firebaseio.com/tipp";
 
-const _fbApp = firebase.initializeApp({
-  databaseURL: "https://wmtipp-naponico-default-rtdb.firebaseio.com"
-});
-window._db = firebase.database();
+function fbLoad(){
+  return fetch(FB_URL + '.json')
+    .then(r => r.json())
+    .then(remote => {
+      if(remote){
+        S.tips      = remote.tips      || {};
+        S.results   = remote.results   || {};
+        const km    = remote.koMatches || [];
+        S.koMatches = Array.isArray(km) ? km : Object.values(km);
+      }
+    })
+    .catch(e => console.warn('Firebase load error:', e));
+}
 
-window._db.ref('tipp').on('value', snap => {
-  const remote = snap.val();
-  if(remote){
-    S.tips      = remote.tips      || {};
-    S.results   = remote.results   || {};
-    S.koMatches = Array.isArray(remote.koMatches) ? remote.koMatches : Object.values(remote.koMatches||{});
-  }
-  // re-render current screen
-  if(!window._appStarted){
-    window._appStarted = true;
-    showPlayerSelect();
-  } else {
+function fbSave(){
+  setSyncDot('syncing');
+  const data = {
+    tips:      S.tips      || {},
+    results:   S.results   || {},
+    koMatches: S.koMatches || [],
+  };
+  fetch(FB_URL + '.json', {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(data)
+  })
+  .then(() => setSyncDot('ok'))
+  .catch(() => setSyncDot('error'));
+}
+
+// Poll for updates every 15 seconds so all devices stay in sync
+function fbPoll(){
+  fbLoad().then(() => {
     const tipEl = document.getElementById('tips');
     const resEl = document.getElementById('results');
     const selEl = document.getElementById('playerSelect');
-    if(tipEl.classList.contains('active')){ renderByDate(); renderByGroup(); updateProgress(); updateSaveBar(); }
-    if(resEl.classList.contains('active')){ renderResults(); }
-    if(selEl.classList.contains('active')){ showPlayerSelect(); }
-  }
+    if(tipEl && tipEl.classList.contains('active')){ renderByDate(); renderByGroup(); updateProgress(); updateSaveBar(); }
+    if(resEl && resEl.classList.contains('active')){ renderResults(); }
+    if(selEl && selEl.classList.contains('active')){ showPlayerSelect(); }
+  });
+}
+
+// Show loading state immediately
+document.getElementById('playerSelect').classList.add('active');
+document.getElementById('playerButtons').innerHTML =
+  '<div style="color:var(--muted);font-size:14px;padding:40px 0">⏳ Lade Daten…</div>';
+
+// Initial load then start
+fbLoad().then(() => {
+  showPlayerSelect();
+  setInterval(fbPoll, 15000);
+}).catch(() => {
+  // Fallback: start without Firebase
+  showPlayerSelect();
 });
 
 </script>
