@@ -356,7 +356,8 @@ let S = {players:["Pollo","Shaqiri","Mia","Nathi"],tips:{},results:{},koMatches:
 // Restore currentPlayer from localStorage (device-local)
 try{ const cp=localStorage.getItem('wm26_cp'); if(cp) S.currentPlayer=cp; }catch(e){}
 function save(){
-  localSave();
+  // localStorage als Offline-Backup
+  try{ localStorage.setItem('wm26v3', JSON.stringify({tips:S.tips,results:S.results,koMatches:S.koMatches})); }catch(e){}
   fbSave();
 }
 
@@ -749,75 +750,65 @@ function setNav(id){ ['navT','navR','navP'].forEach(n=>document.getElementById(n
 function esc(s){ return s.replace(/'/g,"\\'"); }
 
 // ════════════════════════════════════════
-// INIT — Firebase REST API (no SDK needed)
+// INIT — Firebase REST API
+// Firebase ist die einzige Quelle der Wahrheit.
+// Speichern = sofort zu Firebase. Laden = immer von Firebase.
 // ════════════════════════════════════════
 document.getElementById('tipsName').textContent='';
 
 const FB_URL = "https://wmtipp-naponico-default-rtdb.firebaseio.com/tipp";
+let _saving = false;  // blockiert Poll während Save läuft
+let _saveTimer = null; // debounce: sammelt schnelle Eingaben
 
-// ── localStorage als primärer Speicher, Firebase als Sync ──
-// Beim Start: lade aus localStorage (sofort), dann merge mit Firebase
-function localSave(){
-  try{ localStorage.setItem('wm26v3', JSON.stringify({
-    tips: S.tips, results: S.results, koMatches: S.koMatches
-  })); }catch(e){}
-}
-function localLoad(){
-  try{
-    const s = localStorage.getItem('wm26v3');
-    if(s){
-      const d = JSON.parse(s);
-      S.tips      = d.tips      || {};
-      S.results   = d.results   || {};
-      S.koMatches = d.koMatches || [];
-    }
-  }catch(e){}
+function applyRemote(remote){
+  if(!remote) return;
+  S.tips      = remote.tips      || {};
+  S.results   = remote.results   || {};
+  const km    = remote.koMatches || [];
+  S.koMatches = Array.isArray(km) ? km : Object.values(km);
 }
 
-let _syncing = false;
+function rerender(){
+  const tipEl = document.getElementById('tips');
+  const resEl = document.getElementById('results');
+  const selEl = document.getElementById('playerSelect');
+  if(tipEl && tipEl.classList.contains('active')){ renderByDate(); renderByGroup(); updateProgress(); updateSaveBar(); }
+  if(resEl && resEl.classList.contains('active')){ renderResults(); }
+  if(selEl && selEl.classList.contains('active')){ showPlayerSelect(); }
+}
+
+// Speichert den gesamten State zu Firebase (debounced 300ms)
 function fbSave(){
   setSyncDot('syncing');
-  _syncing = true;
-  const data = {
-    tips:      S.tips      || {},
-    results:   S.results   || {},
-    koMatches: S.koMatches || [],
-  };
-  fetch(FB_URL + '.json', {
-    method: 'PUT',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(data)
-  })
-  .then(r => r.json())
-  .then(() => { _syncing = false; setSyncDot('ok'); })
-  .catch(() => { _syncing = false; setSyncDot('error'); });
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => {
+    _saving = true;
+    const data = {
+      tips:      S.tips      || {},
+      results:   S.results   || {},
+      koMatches: S.koMatches || [],
+    };
+    fetch(FB_URL + '.json', {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    })
+    .then(r => { if(!r.ok) throw new Error(r.status); return r.json(); })
+    .then(() => { _saving = false; setSyncDot('ok'); })
+    .catch(e => { _saving = false; setSyncDot('error'); console.warn('Save error:', e); });
+  }, 300);
 }
 
+// Poll: lädt Firebase und überschreibt lokalen State vollständig
+// Läuft NICHT während ein Save aktiv ist
 function fbPoll(){
-  if(_syncing) return;
+  if(_saving) return;
   fetch(FB_URL + '.json')
-    .then(r => r.json())
+    .then(r => { if(!r.ok) throw new Error(r.status); return r.json(); })
     .then(remote => {
-      if(!remote || _syncing) return;
-      // Merge: Firebase wins for results/koMatches (admin entries),
-      // but local wins for tips of current player (being edited)
-      const localTips = S.currentPlayer ? (S.tips[S.currentPlayer] || {}) : {};
-      S.tips      = remote.tips      || S.tips;
-      S.results   = remote.results   || S.results;
-      const km    = remote.koMatches || S.koMatches;
-      S.koMatches = Array.isArray(km) ? km : Object.values(km);
-      // Restore current player's local tips (in case they're mid-edit)
-      if(S.currentPlayer && Object.keys(localTips).length > 0){
-        S.tips[S.currentPlayer] = localTips;
-      }
-      localSave();
-      // Re-render
-      const tipEl = document.getElementById('tips');
-      const resEl = document.getElementById('results');
-      const selEl = document.getElementById('playerSelect');
-      if(tipEl && tipEl.classList.contains('active')){ renderByDate(); renderByGroup(); updateProgress(); updateSaveBar(); }
-      if(resEl && resEl.classList.contains('active')){ renderResults(); }
-      if(selEl && selEl.classList.contains('active')){ showPlayerSelect(); }
+      if(_saving) return; // nochmal prüfen nach dem await
+      applyRemote(remote);
+      rerender();
     })
     .catch(e => console.warn('Poll error:', e));
 }
@@ -827,27 +818,21 @@ document.getElementById('playerSelect').classList.add('active');
 document.getElementById('playerButtons').innerHTML =
   '<div style="color:var(--muted);font-size:14px;padding:40px 0">⏳ Lade Daten…</div>';
 
-// 1. Load from localStorage immediately (no flicker)
-localLoad();
-
-// 2. Then sync with Firebase
+// Initialer Load von Firebase — dann App starten
 fetch(FB_URL + '.json')
   .then(r => r.json())
   .then(remote => {
-    if(remote){
-      // Merge Firebase into local — Firebase is source of truth on first load
-      S.tips      = remote.tips      || S.tips;
-      S.results   = remote.results   || S.results;
-      const km    = remote.koMatches || S.koMatches;
-      S.koMatches = Array.isArray(km) ? km : Object.values(km);
-      localSave();
-    }
+    applyRemote(remote);
     showPlayerSelect();
-    setInterval(fbPoll, 20000);
+    setInterval(fbPoll, 10000); // alle 10s synchronisieren
   })
   .catch(() => {
+    // Offline-Fallback: localStorage
+    try{
+      const s = localStorage.getItem('wm26v3');
+      if(s){ const d=JSON.parse(s); S.tips=d.tips||{}; S.results=d.results||{}; S.koMatches=d.koMatches||[]; }
+    }catch(e){}
     showPlayerSelect();
-    setInterval(fbPoll, 20000);
   });
 
 </script>
