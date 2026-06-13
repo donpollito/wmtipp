@@ -228,44 +228,8 @@ input[type=text]:focus{border-color:var(--gold)}
   <button class="nav-btn" id="navP" onclick="showPlayerSelect()"><span class="ni">👤</span>Spieler</button>
 </div>
 
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getDatabase, ref, onValue, set, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-
-const FB_CONFIG = {
-  databaseURL: "https://wmtipp-naponico-default-rtdb.firebaseio.com"
-};
-const app = initializeApp(FB_CONFIG);
-const db  = getDatabase(app);
-const ROOT = ref(db, 'tipp');
-
-// ── expose to global scope ──
-window._fbSet    = (path, val) => set(ref(db, 'tipp/' + path), val);
-window._fbUpdate = (path, val) => update(ref(db, 'tipp/' + path), val);
-window._fbListen = (path, cb)  => onValue(ref(db, 'tipp/' + path), snap => cb(snap.val()));
-window._fbReady  = true;
-
-// Bootstrap: load full state from Firebase, then start app
-onValue(ROOT, snap => {
-  const remote = snap.val();
-  if (remote) {
-    // merge remote into S, keep local players list as source of truth
-    S.tips      = remote.tips      || {};
-    S.results   = remote.results   || {};
-    S.koMatches = remote.koMatches || [];
-  }
-  if (!window._appStarted) {
-    window._appStarted = true;
-    showPlayerSelect();
-  } else {
-    // live update: re-render whatever is visible
-    if (document.getElementById('tips').classList.contains('active'))    { renderByDate(); renderByGroup(); updateProgress(); updateSaveBar(); }
-    if (document.getElementById('results').classList.contains('active')) { renderResults(); }
-    if (document.getElementById('playerSelect').classList.contains('active')) { showPlayerSelect(); }
-  }
-}, { onlyOnce: false });
-</script>
-
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 <script>
 // ════════════════════════════════════════
 // DATA  — all times MESZ (= CEST = UTC+2)
@@ -392,15 +356,13 @@ let S = {players:["Pollo","Shaqiri","Mia","Nathi"],tips:{},results:{},koMatches:
 try{ const cp=localStorage.getItem('wm26_cp'); if(cp) S.currentPlayer=cp; }catch(e){}
 function save(){
   setSyncDot('syncing');
-  // localStorage backup
   try{localStorage.setItem('wm26v3',JSON.stringify(S));}catch(e){}
-  // Firebase sync
-  if(window._fbReady){
-    Promise.all([
-      window._fbSet('tips',     S.tips      || {}),
-      window._fbSet('results',  S.results   || {}),
-      window._fbSet('koMatches',S.koMatches || []),
-    ]).then(()=>setSyncDot('ok')).catch(()=>setSyncDot('error'));
+  if(window._db){
+    window._db.ref('tipp').update({
+      tips:     S.tips      || {},
+      results:  S.results   || {},
+      koMatches:S.koMatches || [],
+    }).then(()=>setSyncDot('ok')).catch(()=>setSyncDot('error'));
   }
 }
 
@@ -793,10 +755,40 @@ function setNav(id){ ['navT','navR','navP'].forEach(n=>document.getElementById(n
 function esc(s){ return s.replace(/'/g,"\\'"); }
 
 // ════════════════════════════════════════
-// INIT
+// INIT — Firebase compat SDK
 // ════════════════════════════════════════
-document.getElementById('tipsName') && (document.getElementById('tipsName').textContent='');
-// Firebase listener calls showPlayerSelect() once loaded
+document.getElementById('tipsName').textContent='';
+
+// Show loading spinner immediately
+document.getElementById('playerSelect').classList.add('active');
+document.getElementById('playerButtons').innerHTML=
+  '<div style="color:var(--muted);font-size:14px;padding:40px 0">⏳ Verbinde mit Firebase…</div>';
+
+const _fbApp = firebase.initializeApp({
+  databaseURL: "https://wmtipp-naponico-default-rtdb.firebaseio.com"
+});
+window._db = firebase.database();
+
+window._db.ref('tipp').on('value', snap => {
+  const remote = snap.val();
+  if(remote){
+    S.tips      = remote.tips      || {};
+    S.results   = remote.results   || {};
+    S.koMatches = Array.isArray(remote.koMatches) ? remote.koMatches : Object.values(remote.koMatches||{});
+  }
+  // re-render current screen
+  if(!window._appStarted){
+    window._appStarted = true;
+    showPlayerSelect();
+  } else {
+    const tipEl = document.getElementById('tips');
+    const resEl = document.getElementById('results');
+    const selEl = document.getElementById('playerSelect');
+    if(tipEl.classList.contains('active')){ renderByDate(); renderByGroup(); updateProgress(); updateSaveBar(); }
+    if(resEl.classList.contains('active')){ renderResults(); }
+    if(selEl.classList.contains('active')){ showPlayerSelect(); }
+  }
+});
 
 </script>
 </body>
