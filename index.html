@@ -766,8 +766,13 @@ function fbLoad(){
     .catch(e => console.warn('Firebase load error:', e));
 }
 
+let _saving = false;
+let _lastSave = 0;
+
 function fbSave(){
   setSyncDot('syncing');
+  _saving = true;
+  _lastSave = Date.now();
   const data = {
     tips:      S.tips      || {},
     results:   S.results   || {},
@@ -778,12 +783,13 @@ function fbSave(){
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify(data)
   })
-  .then(() => setSyncDot('ok'))
-  .catch(() => setSyncDot('error'));
+  .then(() => { _saving = false; setSyncDot('ok'); })
+  .catch(() => { _saving = false; setSyncDot('error'); });
 }
 
-// Poll for updates every 15 seconds so all devices stay in sync
+// Poll for updates every 20 seconds — but never while saving or within 5s of a save
 function fbPoll(){
+  if(_saving || (Date.now() - _lastSave < 5000)) return;
   fbLoad().then(() => {
     const tipEl = document.getElementById('tips');
     const resEl = document.getElementById('results');
@@ -802,7 +808,7 @@ document.getElementById('playerButtons').innerHTML =
 // Initial load then start
 fbLoad().then(() => {
   showPlayerSelect();
-  setInterval(fbPoll, 15000);
+  setInterval(fbPoll, 20000);
 }).catch(() => {
   // Fallback: start without Firebase
   showPlayerSelect();
