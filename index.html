@@ -738,9 +738,69 @@ function saveRes(id,side,val){
   if(!S.results)S.results={};
   if(!S.results[id])S.results[id]={h:'',a:''};
   S.results[id][side]=val===''?'':parseInt(val);
-  save(); renderResults();
-  // re-render group tab if tips screen visible
+  save();
+  // Only update leaderboard + tip bubbles, don't re-render input fields
+  renderLeaderboard();
+  updateTipBubbles(id);
   if(document.getElementById('tips').classList.contains('active')) renderByGroup();
+}
+
+function renderLeaderboard(){
+  const scores=S.players.map(p=>({name:p,...calcPts(p)})).sort((a,b)=>b.pts-a.pts);
+  const lb=document.getElementById('lbContent');
+  if(!lb) return;
+  const hasRes=Object.keys(S.results||{}).some(k=>{const r=S.results[k];return r&&r.h!==''&&r.a!=='';});
+  if(!hasRes){
+    lb.innerHTML=`<div class="empty"><div class="ei">⏳</div><p>Noch keine Ergebnisse eingetragen</p></div>`;
+    return;
+  }
+  let pod='';
+  if(scores.length>=2){
+    const [s1,s2,s3]=scores;
+    const items=s3?[{s:s2,cls:'p2',m:'🥈'},{s:s1,cls:'p1',m:'🥇'},{s:s3,cls:'p3',m:'🥉'}]
+                  :[{s:s2,cls:'p2',m:'🥈'},{s:s1,cls:'p1',m:'🥇'}];
+    pod=`<div class="podium">${items.map(({s,cls,m})=>`
+      <div class="pod-item ${cls}">
+        <div class="pod-medal">${m}</div>
+        <div class="pod-name">${s.name}</div>
+        <div class="pod-pts">${s.pts}</div>
+        <div class="pod-block"></div>
+      </div>`).join('')}</div>`;
+  }
+  lb.innerHTML=pod+`<div class="lb-list">${
+    scores.map((s,i)=>`<div class="lb-row">
+      <div class="lb-rank">${i+1}</div>
+      <div class="lb-av">${s.name[0].toUpperCase()}</div>
+      <div><div class="lb-name">${s.name}</div><div class="lb-sub">${s.exact||0} exakt · ${s.tend||0} Tendenz</div></div>
+      <div class="lb-pts"><div class="lb-num">${s.pts}</div><div class="lb-lbl">Pkt</div></div>
+    </div>`).join('')
+  }</div>`;
+}
+
+function updateTipBubbles(matchId){
+  const res=(S.results||{})[matchId]||{h:'',a:''};
+  const hasRes=res.h!==''&&res.a!=='';
+  const bubs=S.players.map(p=>{
+    const t=(S.tips[p]||{})[matchId];
+    if(!t||t.h===''||t.a==='') return `<span class="tip-bub nd">${p}:?</span>`;
+    const th=+t.h,ta=+t.a;
+    if(!hasRes) return `<span class="tip-bub nd">${p}:${th}:${ta}</span>`;
+    const rh=+res.h,ra=+res.a;
+    const cls=(th===rh&&ta===ra)?'ok':Math.sign(rh-ra)===Math.sign(th-ta)?'ok':'nok';
+    return `<span class="tip-bub ${cls}">${p}:${th}:${ta}</span>`;
+  }).join('');
+  // Update only the tips-row for this match
+  const cards = document.querySelectorAll('.res-card');
+  cards.forEach(card => {
+    const inputs = card.querySelectorAll('.score-mini');
+    if(inputs.length>=2){
+      const onchange = inputs[0].getAttribute('onchange')||'';
+      if(onchange.includes("'"+matchId+"'")||onchange.includes('"'+matchId+'"')){
+        const row = card.querySelector('.tips-row');
+        if(row) row.innerHTML=bubs;
+      }
+    }
+  });
 }
 
 function addKo(roundId){
@@ -750,8 +810,10 @@ function addKo(roundId){
   if(!h||!a) return;
   const id=roundId+'_'+Date.now();
   if(!S.koMatches)S.koMatches=[];
-  S.koMatches.push({id,h,a,t,dt:'2026-07-'+roundId,round:roundId,phase:'ko'});
-  save(); renderResults();
+  S.koMatches.push({id,h,a,t,dt:'2026-07-01',round:roundId,phase:'ko'});
+  save();
+  // Full re-render needed here since we added new matches
+  renderResults();
 }
 function rmKo(id){
   S.koMatches=(S.koMatches||[]).filter(m=>m.id!==id);
@@ -802,7 +864,7 @@ function rerender(){
   const resEl = document.getElementById('results');
   const selEl = document.getElementById('playerSelect');
   if(tipEl && tipEl.classList.contains('active')){ renderByDate(); renderByGroup(); updateProgress(); updateSaveBar(); }
-  if(resEl && resEl.classList.contains('active')){ renderResults(); }
+  if(resEl && resEl.classList.contains('active')){ renderLeaderboard(); } // Don't re-render inputs on poll
   if(selEl && selEl.classList.contains('active')){ showPlayerSelect(); }
 }
 
@@ -850,12 +912,21 @@ function fbSave(){
 
 // Poll: lädt Firebase und überschreibt lokalen State vollständig
 // Läuft NICHT während ein Save aktiv ist
+let _lastInteraction = 0;
+document.addEventListener('touchstart', () => _lastInteraction = Date.now());
+document.addEventListener('keydown',    () => _lastInteraction = Date.now());
+document.addEventListener('focus',      () => _lastInteraction = Date.now(), true);
+document.addEventListener('input',      () => _lastInteraction = Date.now(), true);
+
 function fbPoll(){
   if(_saving) return;
+  // Nicht pollen wenn der User in den letzten 30 Sekunden interagiert hat
+  if(Date.now() - _lastInteraction < 30000) return;
   fetch(FB_URL + '.json')
     .then(r => { if(!r.ok) throw new Error(r.status); return r.json(); })
     .then(remote => {
-      if(_saving) return; // nochmal prüfen nach dem await
+      if(_saving) return;
+      if(Date.now() - _lastInteraction < 30000) return;
       applyRemote(remote);
       rerender();
     })
