@@ -220,11 +220,25 @@ input[type=text]:focus{border-color:var(--gold)}
 <!-- RESULTS -->
 <div id="results" class="screen">
   <div class="res-hdr"><div class="res-hdr-inner">🏅 Rangliste</div></div>
+  <div class="tab-bar">
+    <div class="tab-bar-inner">
+      <button class="tab active" id="resTab1" onclick="switchResTab('resTabRanking',this)">🏅 Rangliste</button>
+      <button class="tab" id="resTab2" onclick="switchResTab('resTabResults',this)">⚽ Ergebnisse</button>
+      <button class="tab" id="resTab3" onclick="switchResTab('resTabKO',this)">⚙️ KO</button>
+    </div>
+  </div>
   <div class="lb-wrap">
-    <div id="lbContent"></div>
-    <div class="sec-title">Ergebnisse eintragen</div>
-    <div class="pts-legend">Exakt = 3 Pkt · Richtige Tendenz = 1 Pkt</div>
-    <div id="resList"></div>
+    <div id="resTabRanking" class="res-tab-content active">
+      <div id="lbContent"></div>
+      <div id="groupsContent"></div>
+    </div>
+    <div id="resTabResults" class="res-tab-content" style="display:none">
+      <div style="padding:10px 0 4px;font-size:12px;color:var(--muted)">Exakt = 3 Pkt · Richtige Tendenz = 1 Pkt</div>
+      <div id="resMatchList"></div>
+    </div>
+    <div id="resTabKO" class="res-tab-content" style="display:none">
+      <div id="resKOList"></div>
+    </div>
   </div>
 </div>
 
@@ -571,7 +585,89 @@ function allGroupsComplete(){
 // ════════════════════════════════════════
 // RESULTS SCREEN
 // ════════════════════════════════════════
-function showResultsScreen(){ show('results'); showNav(); setNav('navR'); renderResults(); }
+function showResultsScreen(){ show('results'); showNav(); setNav('navR'); renderLeaderboard(); renderGroups(); renderResMatches(); renderKOAdmin(); }
+
+function switchResTab(id, btn){
+  document.querySelectorAll('.res-tab-content').forEach(t=>{ t.style.display='none'; t.classList.remove('active'); });
+  document.querySelectorAll('#results .tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById(id).style.display='block';
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+}
+
+function renderGroups(){
+  const el = document.getElementById('groupsContent');
+  if(!el) return;
+  let html='<div class="sec-title">Gruppenübersicht</div><div class="res-groups-grid">';
+  GROUPS.forEach(g=>{
+    const st=calcStanding(g.n);
+    html+=`<div class="group-card" style="margin-bottom:0">
+      <div class="group-card-title">Gruppe ${g.n}</div>
+      <table class="group-table">
+        <tr><th>Team</th><th>Sp</th><th>T</th><th>Pkt</th></tr>`;
+    st.forEach((row,i)=>{
+      const cls=i<2?'qualified':i===2?'maybe':'';
+      html+=`<tr class="${cls}"><td>${row.team}</td><td>${row.played}</td><td>${row.gf}:${row.ga}</td><td class="pts-col">${row.pts}</td></tr>`;
+    });
+    html+='</table></div>';
+  });
+  html+='</div>';
+  el.innerHTML=html;
+}
+
+function renderResMatches(){
+  // This is rendered ONCE when tab is opened, never auto-refreshed
+  const el = document.getElementById('resMatchList');
+  if(!el) return;
+  const DAYS=['So','Mo','Di','Mi','Do','Fr','Sa'];
+  const allGMs=GROUP_MATCHES.slice().sort((a,b)=>(a.dt+a.t).localeCompare(b.dt+b.t));
+  const byDate={};
+  allGMs.forEach(m=>{ if(!byDate[m.dt])byDate[m.dt]=[]; byDate[m.dt].push(m); });
+  let html='';
+  Object.keys(byDate).sort().forEach(dt=>{
+    const d=new Date(dt+'T12:00:00');
+    html+=`<div style="font-size:11px;color:var(--muted);padding:8px 0 4px">${DAYS[d.getDay()]}, ${d.getDate()}.${d.getMonth()+1}.</div><div class="res-grid">`;
+    byDate[dt].forEach(m=>{ html+=resCard(m); });
+    html+='</div>';
+  });
+  if((S.koMatches||[]).length>0){
+    html+=`<div style="font-size:11px;color:var(--muted);padding:8px 0 4px">K.O.-Phase</div><div class="res-grid">`;
+    (S.koMatches||[]).forEach(m=>{ html+=resCard(m); });
+    html+='</div>';
+  }
+  el.innerHTML=html;
+}
+
+function renderKOAdmin(){
+  const el = document.getElementById('resKOList');
+  if(!el) return;
+  let html=`<div style="padding:8px 0 12px;font-size:13px;color:var(--muted)">Trage hier die KO-Paarungen ein sobald sie feststehen.</div>`;
+  KO_ROUNDS.forEach(r=>{
+    const existing=(S.koMatches||[]).filter(m=>m.round===r.id);
+    html+=`<div class="ko-round-block"><div class="ko-round-name">${r.label} (${existing.length})</div>`;
+    existing.forEach(m=>{
+      html+=`<div class="ko-existing"><span>${m.h} – ${m.a}${m.t?' · '+m.t:''}</span>
+        <button class="btn-ko-rm" onclick="rmKo('${m.id}')">×</button></div>`;
+    });
+    html+=`<div class="ko-pair-row">
+      <input type="text" class="ko-inp" id="kh_${r.id}" placeholder="Team 1">
+      <input type="text" class="ko-inp" id="ka_${r.id}" placeholder="Team 2">
+      <input type="text" class="ko-inp ko-date-inp" id="kt_${r.id}" placeholder="z.B. 19:00">
+      <button class="btn-ko-add" onclick="addKo('${r.id}')">+</button>
+    </div></div>`;
+  });
+  // Show standings if all groups complete
+  if(allGroupsComplete()){
+    html+=`<div style="margin-top:12px;font-size:12px;color:var(--green)">✓ Gruppenphase abgeschlossen</div>
+    <div style="font-size:11px;color:var(--muted);margin-top:6px">`;
+    GROUPS.forEach(g=>{
+      const st=calcStanding(g.n);
+      html+=`<div style="margin-bottom:2px"><b style="color:var(--gold)">Gr.${g.n}:</b> 1.${st[0].team} · 2.${st[1].team} · 3.${st[2].team}</div>`;
+    });
+    html+='</div>';
+  }
+  el.innerHTML=html;
+}
 
 function calcPts(player){
   let pts=0,exact=0,tend=0;
@@ -587,7 +683,8 @@ function calcPts(player){
   return {pts,exact,tend};
 }
 
-function renderResults(){
+function renderResults(){ renderLeaderboard(); renderGroups(); renderResMatches(); renderKOAdmin(); }
+function renderResults_OLD(){
   const scores=S.players.map(p=>({name:p,...calcPts(p)})).sort((a,b)=>b.pts-a.pts);
   const lb=document.getElementById('lbContent');
   const hasRes=Object.keys(S.results||{}).some(k=>{const r=S.results[k];return r&&r.h!==''&&r.a!=='';});
@@ -819,7 +916,7 @@ function rmKo(id){
   S.koMatches=(S.koMatches||[]).filter(m=>m.id!==id);
   if(S.results)delete S.results[id];
   Object.keys(S.tips).forEach(p=>{if(S.tips[p])delete S.tips[p][id];});
-  save(); renderResults();
+  save(); renderKOAdmin(); renderResMatches();
 }
 
 
@@ -864,7 +961,10 @@ function rerender(){
   const resEl = document.getElementById('results');
   const selEl = document.getElementById('playerSelect');
   if(tipEl && tipEl.classList.contains('active')){ renderByDate(); renderByGroup(); updateProgress(); updateSaveBar(); }
-  if(resEl && resEl.classList.contains('active')){ renderLeaderboard(); } // Don't re-render inputs on poll
+  if(resEl && resEl.classList.contains('active')){
+    // Only update leaderboard and groups — never touch input fields on poll
+    renderLeaderboard(); renderGroups();
+  }
   if(selEl && selEl.classList.contains('active')){ showPlayerSelect(); }
 }
 
